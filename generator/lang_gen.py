@@ -3,26 +3,35 @@
 Language Learning List Generator
 
 Implements a pipeline to:
-1) Locate the next unfinished lemma (after skipping the first 500 entries) in a frequency list file.
-2) Use an OpenAI model to generate 10 different 5-8 word sentences containing that lemma.
+1) Locate the next unfinished lemma (after skipping the first 300 entries) in a TSV-like frequency list file.
+   The file columns are generally: lemma, part_of_speech, definition, sentence (tabs between columns).
+2) Use an OpenAI model to generate 15 different 5-8 word sentences containing that lemma.
+   The prompt includes the lemma's part of speech and definition. If the POS is a verb, it mentions that any
+   inflection of the verb is allowed.
 3) Lemmatize those sentences with Stanza, removing punctuation.
 4) Select the sentence that introduces the fewest new lemmas relative to those present before the current lemma.
-5) Write results to a new list file (copy), appending the sentence to the lemma's line; if new lemmas are needed,
-   insert them before the current lemma (and remove moved lemmas from further down the list).
+5) Apply results directly to the SAME input file (edit-in-place), appending the sentence to the lemma's line.
+   If new lemmas are needed:
+     - If they ALREADY exist later in the list, move them before the current lemma (and remove duplicates later).
+     - If they are OUTSIDE the list, INSERT them immediately before the current lemma as single-column entries
+       (lemma only, without POS/definition/sentence). These single-column entries are considered "no sentence needed"
+       and are skipped by generation in future steps, but they are used normally when checking new words.
 
 Notes:
-- Input list files are named like "1.txt", "2.text", "3.text", etc.
-- The original file is not modified. A new copy with its leading number incremented is always created.
+- Input list files are TSV-like text files. Lines can be:
+    - Single column: "lemma" (single-column entries have no POS/definition/sentence and are skipped for generation)
+    - Four columns: "lemma\tpart_of_speech\tdefinition\tsentence"
+- The original file IS modified in place (no new copy per step).
 - This script depends on:
     - openai (>=1.0.0): pip install openai
     - stanza: pip install stanza
   Stanza will attempt to download the English models on first run if not present.
 
 CLI:
-    python lang_gen.py --steps 3 --file 1.txt --model gpt-5-mini
+    python lang_gen.py --steps 3 --file 1.txt --lang en --model gpt-5-mini
 
 Public entrypoint:
-    generate_language_learning_list(steps: int, filename: str, skip_count: int = 500, language: str = "en", model: str = "gpt-5-mini")
+    generate_language_learning_list(steps: int, filename: str, skip_count: int = 300, language: str = "en", model: str = "gpt-5-mini")
 
 Environment:
     Requires OPENAI_API_KEY set for LLM calls. A fallback generator is provided if the API call fails.
@@ -49,7 +58,12 @@ except Exception:  # pragma: no cover
 @dataclass
 class ListEntry:
     lemma: str
+    pos: Optional[str]
+    definition: Optional[str]
     sentence: Optional[str]  # None if not yet filled
+    # True if this line should be rendered as a single-column lemma only (no POS/def/sentence).
+    # Used for out-of-list insertions and for preserving original single-column lines.
+    is_minimal: bool = False
 
 
 @dataclass
@@ -64,10 +78,10 @@ class LemmatizedSentence:
 
 def parse_list_file(path: str) -> List[ListEntry]:
     """
-    Parse a list file containing one lemma per line. A line may be:
-      - "lemma"
-      - "lemma\tSentence text..."
-    Blank lines are ignored.
+    Parse a TSV-like list file. Each non-blank line is one entry with either:
+      - single column: lemma
+      - four columns: lemma, part_of_speech, definition, sentence (sentence may be empty)
+    Extra columns beyond the first four are ignored.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"List file not found: {path}")
@@ -78,24 +92,59 @@ def parse_list_file(path: str) -> List[ListEntry]:
             line = raw.rstrip("\n\r")
             if not line.strip():
                 continue
-            if "\t" in line:
-                lemma, sentence = line.split("\t", 1)
-                entries.append(ListEntry(lemma=lemma.strip(), sentence=sentence.strip() if sentence.strip() else None))
-            else:
-                entries.append(ListEntry(lemma=line.strip(), sentence=None))
+            parts = line.split("\t")
+            if len(parts) == 1:
+                lemma = parts[0].strip()
+                if not lemma:
+                    continue
+                entries.append(
+                    ListEntry(
+                        lemma=lemma,
+                        pos=None,
+                        definition=None,
+                        sentence=None,
+                        is_minimal=True,
+                    )
+                )
+                continue
+
+            # 2+ columns: treat as 4-column shape; sentence may be empty
+            lemma = parts[0].strip() if len(parts) >= 1 else ""
+            pos = parts[1].strip() if len(parts) >= 2 else ""
+            definition = parts[2].strip() if len(parts) >= 3 else ""
+            sentence = parts[3].strip() if len(parts) >= 4 and parts[3].strip() else None
+
+            if not lemma:
+                continue
+
+            entries.append(
+                ListEntry(
+                    lemma=lemma,
+                    pos=pos or None,
+                    definition=definition or None,
+                    sentence=sentence if sentence else None,
+                    is_minimal=False,
+                )
+            )
     return entries
 
 
 def write_list_file(entries: Sequence[ListEntry], path: str) -> None:
     """
-    Write entries to a file. If sentence is present, write 'lemma\tSentence'.
+    Write entries back to a TSV-like file.
+      - If is_minimal is True and no POS/definition/sentence are present, write single-column: "lemma"
+      - Otherwise, write 4 columns: lemma<TAB>part_of_speech<TAB>definition<TAB>sentence
     """
     with open(path, "w", encoding="utf-8") as f:
         for e in entries:
-            if e.sentence:
-                f.write(f"{e.lemma}\t{e.sentence}\n")
-            else:
+            if e.is_minimal and not e.pos and not e.definition and not e.sentence:
                 f.write(f"{e.lemma}\n")
+            else:
+                lemma = e.lemma if e.lemma is not None else ""
+                pos = e.pos if e.pos is not None else ""
+                definition = e.definition if e.definition is not None else ""
+                sentence = e.sentence if e.sentence is not None else ""
+                f.write(f"{lemma}\t{pos}\t{definition}\t{sentence}\n")
 
 
 def get_next_filename(current_filename: str) -> str:
@@ -105,6 +154,8 @@ def get_next_filename(current_filename: str) -> str:
         1.txt -> 2.txt
         2.text -> 3.text
         99 -> 100.txt (default to .txt if no extension)
+
+    Note: retained for compatibility, but no longer used since we edit in place.
     """
     base = os.path.basename(current_filename)
     m = re.match(r"^(\d+)(\.[^.]+)?$", base)
@@ -123,42 +174,90 @@ def get_next_filename(current_filename: str) -> str:
 
 # --------------- Step 1: Find next unfinished lemma ---------------
 
-def find_next_undone_lemma(entries: Sequence[ListEntry], skip_count: int = 500) -> Tuple[int, str]:
+def find_next_undone_lemma(entries: Sequence[ListEntry], skip_count: int = 300) -> Tuple[int, str]:
     """
     Scan entries starting after 'skip_count' lemmas. Return index and lemma of the first entry
-    that does not have a sentence yet. Raises ValueError if none found.
+    that still needs a generated sentence.
+    - Entries marked as minimal (single-column; no POS/definition) are considered 'no sentence needed' and skipped.
+    Raises ValueError if none found.
     """
     if skip_count < 0:
         skip_count = 0
     start = min(skip_count, len(entries))
     for i in range(start, len(entries)):
-        if entries[i].sentence is None:
-            return i, entries[i].lemma
+        e = entries[i]
+        # Skip minimal entries: no generation required
+        if e.is_minimal:
+            continue
+        if e.sentence is None:
+            return i, e.lemma
     raise ValueError("No unfinished lemma found after the skip region.")
 
 
 # --------------- Step 2: LLM sentence generation ---------------
 
-def call_openai_generate_sentences(lemma: str, model: str = "gpt-5-mini") -> List[str]:
+def _language_label(lang: str) -> str:
     """
-    Call OpenAI Responses API to generate 10 different sentences containing 'lemma'.
+    Map language code or name to a human-readable label for prompts.
+    """
+    if not lang:
+        return "English"
+    code = lang.strip().lower()
+    mapping = {
+        "en": "English",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "it": "Italian",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "zh": "Chinese",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "ar": "Arabic",
+        "hi": "Hindi",
+        "tr": "Turkish",
+    }
+    return mapping.get(code, code.title())
+
+def call_openai_generate_sentences(
+    lemma: str,
+    pos: Optional[str] = None,
+    definition: Optional[str] = None,
+    language: str = "en",
+    model: str = "gpt-5-mini",
+) -> List[str]:
+    """
+    Call OpenAI Responses API to generate 15 different sentences containing 'lemma'.
     Each sentence must be between 5 and 8 words (inclusive).
-    Returns a list of 10 strings.
+    The prompt includes part_of_speech and definition. If the lemma is a verb, it mentions
+    that any inflection of the verb is allowed.
+
+    Returns a list of 15 strings.
 
     If the API call fails for any reason, a deterministic fallback generator is used.
     """
     word_count = random.randint(5, 8)
 
-    # Build prompt and schema based on user's suggested structure
-    developer_text = (
-        "You're an expert AI language assistant, analyse the user provided prompt and answer accordingly."
-    )
+    # Construct prompt details
+    pos_lower = (pos or "").strip().lower()
+    verb_note = ""
+    if pos_lower in {"verb", "v", "vb", "v.", "verbal"}:
+        verb_note = " Any inflection of the verb is allowed."
+
+    pos_text = f"Part of speech: {pos}." if pos else "Part of speech: (unspecified)."
+    def_text = f"Definition: {definition}." if definition else "Definition: (unspecified)."
+
+    developer_text = "You're an expert AI language assistant. Produce JSON as specified."
     user_text = (
-        f"Produce 10 simple {word_count}-word sentences that must all include the word {lemma} in one of its forms. "
+        f"Generate 10 simple 5-word or more sentences in {_language_label(language)} that each include the lemma '{lemma}' "
+        f"in one of its valid forms. {pos_text} {def_text}{verb_note} "
+        "Keep sentences natural, common, and educationally useful. "
         "Return only the sentences in the JSON fields as specified."
     )
 
-    # Try OpenAI
+    total = 10
+
     try:
         from openai import OpenAI  # type: ignore
 
@@ -169,26 +268,20 @@ def call_openai_generate_sentences(lemma: str, model: str = "gpt-5-mini") -> Lis
                 {
                     "role": "developer",
                     "content": [
-                        {
-                            "type": "input_text",
-                            "text": developer_text,
-                        }
+                        {"type": "input_text", "text": developer_text}
                     ],
                 },
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "input_text",
-                            "text": user_text,
-                        }
+                        {"type": "input_text", "text": user_text}
                     ],
                 },
             ],
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "ten_sentences",
+                    "name": "fifteen_sentences",
                     "strict": True,
                     "schema": {
                         "type": "object",
@@ -198,19 +291,16 @@ def call_openai_generate_sentences(lemma: str, model: str = "gpt-5-mini") -> Lis
                                     "type": "string",
                                     "description": f"The sentence #{i}."
                                 }
-                                for i in range(1, 11)
+                                for i in range(1, total + 1)
                             }
                         },
-                        "required": [f"sentence{i}" for i in range(1, 11)],
+                        "required": [f"sentence{i}" for i in range(1, total + 1)],
                         "additionalProperties": False,
                     },
                 },
                 "verbosity": "medium",
             },
-            reasoning={
-                "effort": "medium",
-                "summary": "auto",
-            },
+            reasoning={"effort": "medium", "summary": "auto"},
             tools=[],
             store=True,
             include=[
@@ -220,32 +310,22 @@ def call_openai_generate_sentences(lemma: str, model: str = "gpt-5-mini") -> Lis
         )
 
         # Extract JSON text from response
-        # The python SDK v1 Responses API returns output in response.output_text or response.output[0]?.content?
-        # We handle robustly by checking common locations.
         json_str: Optional[str] = None
-
-        # Try new SDK shape
-        # response.output_text may contain already the JSON text
         if hasattr(response, "output_text") and isinstance(response.output_text, str):
             json_str = response.output_text.strip()
-
-        # Some SDK builds place content in response.output or response.data; check generically
         if not json_str:
             candidate = getattr(response, "output", None)
             if candidate and isinstance(candidate, str):
                 json_str = candidate.strip()
-
-        # Last resort: convert whole object to string (may fail)
         if not json_str:
             json_str = str(response).strip()
 
-        # Attempt to find JSON object in the string
         json_match = re.search(r"\{.*\}", json_str, flags=re.S)
         if not json_match:
             raise ValueError("Failed to locate JSON object in LLM response.")
         data = json.loads(json_match.group(0))
 
-        sentences = [data[f"sentence{i}"] for i in range(1, 11)]
+        sentences = [data[f"sentence{i}"] for i in range(1, total + 1)]
         # Basic normalization and deduplication while preserving order
         normed = []
         seen = set()
@@ -255,17 +335,17 @@ def call_openai_generate_sentences(lemma: str, model: str = "gpt-5-mini") -> Lis
                 normed.append(s_clean)
                 seen.add(s_clean.lower())
 
-        # Ensure 10 items: if fewer due to deduping, pad with simple variants
-        while len(normed) < 10:
+        # Ensure exactly total items: if fewer due to deduping, pad with simple variants
+        while len(normed) < total:
             normed.append(_fallback_sentence(lemma, word_count, idx=len(normed) + 1))
 
-        return normed[:10]
+        return normed[:total]
 
     except Exception as e:
         # Fallback deterministic generator (no external calls)
         sys.stderr.write(f"[WARN] OpenAI call failed or unavailable: {e}\n")
         wc = word_count
-        return [_fallback_sentence(lemma, wc, idx=i) for i in range(1, 11)]
+        return [_fallback_sentence(lemma, wc, idx=i) for i in range(1, total + 1)]
 
 
 def _fallback_sentence(lemma: str, word_count: int, idx: int) -> str:
@@ -408,24 +488,41 @@ def apply_sentence_and_reorder(
       - Attach chosen sentence to the current lemma at current_index.
       - If unknown_lemmas is non-empty:
            * Partition them into reorders (present later) and out_of_bound (not present in file).
-           * Insert both groups (in the order they appear in 'unknown_lemmas') right before current_index.
+           * Insert both reorders and out_of_bound right before current_index in the order they appear.
+             - Reorders: preserve their existing POS/definition/sentence from their later line.
+             - Out_of_bound: insert as single-column minimal entries (lemma only; no POS/definition/sentence).
            * Remove the original instances of the reorders from further down the list.
 
     Returns (new_entries, info_dict)
     """
-    # Normalize sets/maps
+    # Map lemma(lower) -> first index
     lemma_to_first_index: Dict[str, int] = {}
     for i, e in enumerate(entries):
         key = e.lemma.lower()
-        if key not in lemma_to_first_index:  # first occurrence (case-insensitive)
+        if key not in lemma_to_first_index:
             lemma_to_first_index[key] = i
 
-    # Update current lemma with chosen sentence
+    # Update current lemma with chosen sentence (preserve pos/definition and minimal flag)
     updated_entries = entries.copy()
-    updated_entries[current_index] = ListEntry(lemma=entries[current_index].lemma, sentence=chosen.original)
+    cur_entry = entries[current_index]
+    updated_entries[current_index] = ListEntry(
+        lemma=cur_entry.lemma,
+        pos=cur_entry.pos,
+        definition=cur_entry.definition,
+        sentence=chosen.original,
+        is_minimal=cur_entry.is_minimal,
+    )
+
+    # Deduplicate unknown lemmas while preserving order
+    unknowns_ordered: List[str] = []
+    _seen_unknowns = set()
+    for _l in unknown_lemmas:
+        if _l not in _seen_unknowns:
+            unknowns_ordered.append(_l)
+            _seen_unknowns.add(_l)
 
     # If no unknowns: simple update
-    if not unknown_lemmas:
+    if not unknowns_ordered:
         return updated_entries, {
             "out_of_bound": [],
             "reorders": [],
@@ -436,54 +533,67 @@ def apply_sentence_and_reorder(
     current_lemma = entries[current_index].lemma
     all_head_lemmas_set = set(e.lemma.lower() for e in entries)
 
-    # Partition unknowns
-    reorders: List[str] = []
+    # Partition unknowns: collect all later occurrences to move, preserving their fields
+    current_lemma_lower = current_lemma.lower()
+    reorders_map: Dict[str, List[ListEntry]] = {}
     out_of_bound: List[str] = []
-    for l in unknown_lemmas:
-        if l == current_lemma.lower():
-            # It is the current lemma itself; it's already present here -> not an unknown in practice,
-            # but keep logic defensive by skipping insertion.
+    for l in unknowns_ordered:
+        if l == current_lemma_lower:
+            # Already present here
             continue
-        if l in all_head_lemmas_set:
-            # Present in file; check if it's after current_index to qualify as reorder
-            orig_idx = lemma_to_first_index.get(l, -1)
-            if orig_idx > current_index:
-                reorders.append(l)
-            else:
-                # If it's before, it wouldn't be part of unknown_lemmas by construction,
-                # but handle gracefully by ignoring.
-                pass
+        # Collect all occurrences later in the list
+        occs: List[ListEntry] = []
+        for j in range(current_index + 1, len(entries)):
+            if entries[j].lemma.lower() == l:
+                occs.append(entries[j])
+        if occs:
+            reorders_map[l] = occs
         else:
-            out_of_bound.append(l)
+            if l not in out_of_bound:
+                out_of_bound.append(l)
 
-    # Build items to insert (in the original unknown order)
+    # Build items to insert (reorders + out_of_bound)
     to_insert: List[ListEntry] = []
-    for l in unknown_lemmas:
-        if l in reorders:
-            orig_idx = lemma_to_first_index[l]
-            # Use the existing entry (lemma with its sentence if any)
-            to_insert.append(ListEntry(lemma=entries[orig_idx].lemma, sentence=entries[orig_idx].sentence))
+    for l in unknowns_ordered:
+        if l in reorders_map:
+            for src in reorders_map[l]:
+                # Preserve pos/definition/sentence and minimal flag as-is
+                to_insert.append(
+                    ListEntry(
+                        lemma=src.lemma,
+                        pos=src.pos,
+                        definition=src.definition,
+                        sentence=src.sentence,
+                        is_minimal=src.is_minimal,
+                    )
+                )
         elif l in out_of_bound:
-            to_insert.append(ListEntry(lemma=l, sentence=None))
+            # Insert a minimal (single-column) entry for out-of-list lemma
+            to_insert.append(
+                ListEntry(
+                    lemma=l,
+                    pos=None,
+                    definition=None,
+                    sentence=None,
+                    is_minimal=True,
+                )
+            )
         else:
-            # Either skipped because it's current or unexpected
+            # skipped (e.g., current lemma)
             pass
 
     # Construct final list: before + inserted + after(without duplicates of reorders)
     before = updated_entries[:current_index]
     after = updated_entries[current_index:]  # includes the current lemma at position 0 of this slice
 
-    # Remove any reorders from 'after' slice except the current lemma row
-    reorder_set = set(reorders)
+    reorder_set = set(reorders_map.keys())
     filtered_after: List[ListEntry] = []
     seen_current = False
     for i, e in enumerate(after):
-        # Keep the first row (the current lemma we just updated)
         if not seen_current:
             filtered_after.append(e)
             seen_current = True
             continue
-        # Skip entries whose lemma is in reorder_set
         if e.lemma.lower() in reorder_set:
             continue
         filtered_after.append(e)
@@ -492,9 +602,9 @@ def apply_sentence_and_reorder(
 
     info = {
         "out_of_bound": out_of_bound,
-        "reorders": reorders,
+        "reorders": list(reorders_map.keys()),
         "out_of_bound_count": len(out_of_bound),
-        "reorders_count": len(reorders),
+        "reorders_count": len(reorders_map),
     }
     return new_entries, info
 
@@ -504,7 +614,7 @@ def apply_sentence_and_reorder(
 def generate_language_learning_list(
     steps: int,
     filename: str,
-    skip_count: int = 500,
+    skip_count: int = 300,
     language: str = "en",
     model: str = "gpt-5-mini",
 ) -> None:
@@ -512,90 +622,102 @@ def generate_language_learning_list(
     The main loop:
       - For each step:
           1) Read the current list file.
-          2) Find the next unfinished lemma after skip_count.
-          3) Generate 10 sentences with LLM.
+          2) Find the next unfinished lemma after skip_count, skipping any single-column (minimal) entries.
+          3) Generate 15 sentences with LLM, using POS/definition in the prompt
+             and noting verb inflection if applicable.
           4) Lemmatize with stanza.
           5) Choose sentence with fewest unknown lemmas vs prev list.
-          6) Write updated list to the next filename (increment leading number).
-          7) Print details and continue to next step using the newly written file.
+          6) Write updated list BACK TO THE SAME FILE (edit in place).
+          7) When out-of-list lemmas are encountered, insert them before the current lemma as single-column entries
+             and do not generate sentences for them in future steps.
     """
     if steps <= 0:
         print("Nothing to do: steps must be > 0.")
         return
 
     current_file = filename
+
     for step_idx in range(1, steps + 1):
         # 1) Read current list
         entries = parse_list_file(current_file)
 
-        # 2) Find target lemma
+        # 2) Find target lemma (skips single-column minimal entries)
         idx, lemma = find_next_undone_lemma(entries, skip_count=skip_count)
 
-        # Prepare prev lemmas set (only heads, ignore sentences)
+        # Gather POS/definition for this lemma
+        target_entry = entries[idx]
+        pos = target_entry.pos
+        definition = target_entry.definition
+
+        # Prepare prev lemmas (only from file order up to idx)
         prev_lemmas = [e.lemma for e in entries[:idx]]
 
+        # Verbose step logging
+        print(f"[Step {step_idx}] Target index={idx}, lemma='{lemma}'")
+        print(f"[Step {step_idx}] POS={pos or '(unspecified)'}; Definition={definition or '(unspecified)'}")
+        print(f"[Step {step_idx}] Model={model}; Language={language}")
+
         # 3) Generate sentences
-        sentences = call_openai_generate_sentences(lemma, model=model)
+        print(f"[Step {step_idx}] Generating candidate sentences...")
+        sentences = call_openai_generate_sentences(lemma, pos=pos, definition=definition, language=language, model=model)
+        for i, s in enumerate(sentences, 1):
+            print(f"[Step {step_idx}] cand[{i:02d}]: {s}")
 
         # 4) Lemmatize
         lemmas_per_sentence = lemmatize_sentences_stanza(sentences, language=language)
+        print(f"[Step {step_idx}] Lemmatization complete for {len(lemmas_per_sentence)} candidates.")
 
         # 5) Choose best sentence
         chosen, dbg = choose_best_sentence(lemma, lemmas_per_sentence, prev_lemmas)
+        if chosen is not None:
+            print(f"[Step {step_idx}] Chosen: '{chosen.original}'")
+            print(f"[Step {step_idx}] Stats: candidates={dbg.get('candidate_count')}, unknown_count={dbg.get('unknown_count')}, token_count={dbg.get('token_count')}")
+            if dbg.get("unknown_list"):
+                print(f"[Step {step_idx}] Unknown lemmas (vs file prior): {', '.join(dbg.get('unknown_list'))}")
 
         if chosen is None:
-            # No sentence included the lemma; skip creating a new file to avoid infinite loop
+            # No sentence included the lemma; skip to avoid infinite loop
             print(f"[Step {step_idx}] No generated sentence contained the lemma '{lemma}'. Skipping this step.")
             break
 
-        # Build unknowns specifically for the chosen sentence
-        prev_set = {l.lower() for l in prev_lemmas}
-        unknowns = [l.lower() for l in chosen.lemmas if l and l.lower() not in prev_set]
+        # Build unknowns for chosen sentence relative to the FILE-ONLY prev set.
+        prev_set_file_only = {l.lower() for l in prev_lemmas}
+        chosen_lemmas_lower = [l.lower() for l in chosen.lemmas if l]
+        unknowns = [l for l in chosen_lemmas_lower if l not in prev_set_file_only]
+        print(f"[Step {step_idx}] Unknowns relative to file before index {idx}: {', '.join(unknowns) if unknowns else '(none)'}")
 
-        # 6) Apply update and write new file
+        # 6) Apply update and write back to the same file
         new_entries, info = apply_sentence_and_reorder(entries, idx, chosen, unknowns)
-        next_file = get_next_filename(current_file)
-        write_list_file(new_entries, next_file)
+
+        write_list_file(new_entries, current_file)
 
         # 7) Print details
-        if len(info.get("out_of_bound", [])) == 0 and len(info.get("reorders", [])) == 0:
-            print(f"[Step {step_idx}] File: {next_file}")
-            print(f"  Lemma: {lemma}")
-            print(f"  Sentence: {chosen.original}")
-            print(f"  Unknown lemmas introduced: 0")
-        else:
-            print(f"[Step {step_idx}] File: {next_file}")
-            print(f"  Lemma: {lemma}")
-            print(f"  Sentence: {chosen.original}")
-            print(f"  Out-of-bound lemmas ({info['out_of_bound_count']}): {', '.join(info['out_of_bound']) if info['out_of_bound'] else '(none)'}")
-            print(f"  Re-orders ({info['reorders_count']}): {', '.join(info['reorders']) if info['reorders'] else '(none)'}")
-
-        # Continue with the new file next
-        current_file = next_file
-
-
-# --------------- CLI ---------------
-
-def _build_arg_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Generate a language learning list with LLM + Stanza.")
-    p.add_argument("--steps", type=int, required=True, help="Number of steps to run.")
-    p.add_argument("--file", type=str, required=True, help="Input list filename (e.g., 1.txt).")
-    p.add_argument("--skip", type=int, default=500, help="Number of initial lemmas to skip (default: 500).")
-    p.add_argument("--lang", type=str, default="en", help="Language code for Stanza (default: en).")
-    p.add_argument("--model", type=str, default="gpt-5-mini", help="OpenAI model name (default: gpt-5-mini).")
-    return p
+        print(f"[Step {step_idx}] Reorders moved before current index: {', '.join(info.get('reorders', [])) if info.get('reorders') else '(none)'}")
+        print(f"[Step {step_idx}] Out-of-list insertions: {', '.join(info.get('out_of_bound', [])) if info.get('out_of_bound') else '(none)'}")
+        print(f"[Step {step_idx}] Wrote updates to: {current_file}")
 
 
 def main() -> None:
-    args = _build_arg_parser().parse_args()
+    parser = argparse.ArgumentParser(description="Language Learning List Generator")
+    parser.add_argument("--steps", type=int, required=True, help="Number of steps to run")
+    parser.add_argument("--file", dest="filename", required=True, help="Path to TSV-like list file")
+    parser.add_argument("--skip", dest="skip_count", type=int, default=300, help="Number of initial lemmas to skip (default: 300)")
+    parser.add_argument(
+        "--language", "--lang",
+        dest="language",
+        default="en",
+        help="Target language code or name for generation and lemmatization (default: en)"
+    )
+    parser.add_argument("--model", default="gpt-5-mini", help="OpenAI model to use (default: gpt-5-mini)")
+    args = parser.parse_args()
+
     generate_language_learning_list(
         steps=args.steps,
-        filename=args.file,
-        skip_count=args.skip,
-        language=args.lang,
+        filename=args.filename,
+        skip_count=args.skip_count,
+        language=args.language,
         model=args.model,
     )
-
 
 if __name__ == "__main__":
     main()
