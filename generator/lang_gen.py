@@ -653,6 +653,7 @@ def generate_language_learning_list(
         prev_lemmas = [e.lemma for e in entries[:idx]]
 
         # Verbose step logging
+        print(f"==================== Step {step_idx} ====================")
         print(f"[Step {step_idx}] Target index={idx}, lemma='{lemma}'")
         print(f"[Step {step_idx}] POS={pos or '(unspecified)'}; Definition={definition or '(unspecified)'}")
         print(f"[Step {step_idx}] Model={model}; Language={language}")
@@ -660,8 +661,8 @@ def generate_language_learning_list(
         # 3) Generate sentences
         print(f"[Step {step_idx}] Generating candidate sentences...")
         sentences = call_openai_generate_sentences(lemma, pos=pos, definition=definition, language=language, model=model)
-        for i, s in enumerate(sentences, 1):
-            print(f"[Step {step_idx}] cand[{i:02d}]: {s}")
+        #for i, s in enumerate(sentences, 1):
+        #    print(f"[Step {step_idx}] cand[{i:02d}]: {s}")
 
         # 4) Lemmatize
         lemmas_per_sentence = lemmatize_sentences_stanza(sentences, language=language)
@@ -676,9 +677,13 @@ def generate_language_learning_list(
                 print(f"[Step {step_idx}] Unknown lemmas (vs file prior): {', '.join(dbg.get('unknown_list'))}")
 
         if chosen is None:
-            # No sentence included the lemma; skip to avoid infinite loop
-            print(f"[Step {step_idx}] No generated sentence contained the lemma '{lemma}'. Skipping this step.")
-            break
+            # No sentence included the lemma; delete the lemma line and continue to next iteration
+            print(f"[Step {step_idx}] No generated sentence contained the lemma '{lemma}'. Deleting this lemma line and continuing.")
+            # Remove the problematic lemma entry and write back to the same file
+            del entries[idx]
+            write_list_file(entries, current_file)
+            print(f"[Step {step_idx}] Deleted lemma '{lemma}' at index {idx} and wrote updates to: {current_file}")
+            continue
 
         # Build unknowns for chosen sentence relative to the FILE-ONLY prev set.
         prev_set_file_only = {l.lower() for l in prev_lemmas}
