@@ -12,8 +12,8 @@ This open project aims to provides **3,000 frequency-based vocabulary flashcards
 
   * English, French, Mandarin Chinese, Spanish, German, Italian, Japanese, Russian, Portuguese, Korean
 * Cards contain words, definitions, example sentences, translations and audio
-* Example sentences are sourced, based on the rules, from large corpora or generated via language models, followed by human review [Read More](generator/README.md)
-* **3K curated cards per language**
+* Example sentences are generated via language models followed by human review [Read More](generator/README.md)
+* **~3K curated cards per language**
 * Repository includes corpora, frequency lists, and flashcard decks
 * At a pace of **25 new cards/day**, a beginner can finish the full deck in \~4 months
 
@@ -21,46 +21,24 @@ This open project aims to provides **3,000 frequency-based vocabulary flashcards
 
 ## Roadmap
 
-### Phase One – Sentence Lists
-
 1. **Collect corpora:** Public sentence banks such as Tatoeba and OpenSubtitles are sourced for each language.
-2. **Build lemma frequency lists:** Usine Stanza (a context aware NLP model) the most frequent lemmas (base or dictionary forms of each word) are extracted from the dataset and sorted by frequency, and part of speech information / multiple definitions for each word are pulled from Wiktionary.
-3. **Human vetting of lists:** Erreneous entries are removed and the best definitions are chosen for each word.
-4. **Generate sentences:** For each new word, a sentence that contains only preveuously learned words is either sourced from the sentence bank or machine generated.
-5. **Final human review:** The quality/naturalness of each example sentence is reviewed by a native speaker.
+2. **Build lemma frequency lists:** The most frequent lemmas are extracted from the dataset sine Stanza (a context aware NLP model) and sorted by frequency, and word information (POS, definitions, conjugations, articles, plural form, etc) for each word are pulled from Wiktionary/standard sources.
+3. **Generate sentences:** For each word sense, a sentence that contains only preveuously learned words is either sourced from the sentence bank or machine generated.
+4. **Generate translations, audio and properly formatted flashcards**.
+5. **Human review:** The quality/naturalness of each example sentence is reviewed by a native speaker.
 
 | Language         | 1 | 2 | 3 | 4 | 5 |
 | ---------------- | - | - | - | - | - |
-| English          | ✅ | ✅ | 50% | ❌ | ❌ |
-| French           | ✅ | ✅ | 50% | ❌ | ❌ |
-| Mandarin Chinese | ✅ | ✅ | 50% | ❌ | ❌ |
-| Spanish          | ✅ | ✅ | ✅ | ❌ | ❌ |
-| German           | ✅ | ✅ | 50% | ❌ | ❌ |
-| Italian          | ✅ | ✅ | 50% | ❌ | ❌ |
-| Japanese         | ✅ | ✅ | 50% | ❌ | ❌ |
-| Russian          | ✅ | ✅ | 50% | ❌ | ❌ |
-| Portuguese       | ✅ | ✅ | 50% | ❌ | ❌ |
-| Korean           | ✅ | ✅ | 50% | ❌ | ❌ |
-
-
-### Phase Two – Deck Building
-
-
-1. **Generate translations, audio and properly formatted flashcards**.
-2. **Human review**.
-
-| Language          | 1 | 2 |
-|-------------------| - | - |
-| English           | ❌ | ❌ |
-| French            | ❌ | ❌ |
-| Mandarin Chinese  | ❌ | ❌ |
-| Spanish           | ❌ | ❌ |
-| German            | ❌ | ❌ |
-| Italian           | ❌ | ❌ |
-| Japanese          | ❌ | ❌ |
-| Russian           | ❌ | ❌ |
-| Portuguese        | ❌ | ❌ |
-| Korean            | ❌ | ❌ |
+| English          | ✅ | 50% | ❌ | ❌ | ❌ |
+| French           | ✅ | 50% | ❌ | ❌ | ❌ |
+| Mandarin Chinese | ✅ | 50% | ❌ | ❌ | ❌ |
+| Spanish          | ✅ | ✅  | ✅ | ✅ | ❌ |
+| German           | ✅ | 50% | ❌ | ❌ | ❌ |
+| Italian          | ✅ | 50% | ❌ | ❌ | ❌ |
+| Japanese         | ✅ | 50% | ❌ | ❌ | ❌ |
+| Russian          | ✅ | 50% | ❌ | ❌ | ❌ |
+| Portuguese       | ✅ | 50% | ❌ | ❌ | ❌ |
+| Korean           | ✅ | 50% | ❌ | ❌ | ❌ |
 ---
 
 ## Flashcard Format
