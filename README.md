@@ -32,7 +32,7 @@ This open project aims to provides **3,000 frequency-based vocabulary flashcards
 | English          | ✅ | 50% | ❌ | ❌ | ❌ |
 | French           | ✅ | 50% | ❌ | ❌ | ❌ |
 | Mandarin Chinese | ✅ | 50% | ❌ | ❌ | ❌ |
-| Spanish          | ✅ | ✅  | ✅ | ✅ | ❌ |
+| Spanish          | ✅ | ✅  | ✅ | ✅ | ✅ |
 | German           | ✅ | 50% | ❌ | ❌ | ❌ |
 | Italian          | ✅ | 50% | ❌ | ❌ | ❌ |
 | Japanese         | ✅ | 50% | ❌ | ❌ | ❌ |
