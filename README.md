@@ -2,7 +2,7 @@
 
 ## Overview
 
-This open project aims to provides **3,000 frequency-based vocabulary flashcards** for language learners for multiple languages, built on the **n+1 principle**:
+This open project aims to provide **3,000 frequency-based vocabulary flashcards** for language learners for multiple languages, built on the **n+1 principle**:
 
 > Each new sentence should introduce only *one* new unknown word compared to the learner’s current vocabulary.
 
@@ -15,7 +15,7 @@ This open project aims to provides **3,000 frequency-based vocabulary flashcards
 * Example sentences are generated via language models followed by human review [Read More](generator/README.md)
 * **~3K curated cards per language**
 * Repository includes corpora, frequency lists, and flashcard decks
-* At a pace of **25 new cards/day**, a beginner can finish the full deck in \~4 months
+* At a pace of **25 new cards/day**, a beginner can finish a full deck in \~4 months
 
 ---
 
