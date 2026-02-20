@@ -80,9 +80,9 @@ Each flashcard is **HTML-based** (Anki-compatible).
 
 ## Repository Contents
 
+* 📂 **anki_decks** – Finished language decks
 * 📂 **generator** – Script used to generate sentences 
 * 📂 **corpora** – raw sentence collections for each language
-* 📂 **frequency_lists** – lemmatized, frequency-ranked vocabulary
-* 📂 **flashcards** – Sentence lists and Anki decks 
+* 📂 **frequency_lists** – lemmatized, frequency-ranked vocabulary with example sentences if present
 
 ---
